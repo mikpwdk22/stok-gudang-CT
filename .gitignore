@@ -1,0 +1,47 @@
+# Docker
+.docker/
+
+# Environment files with credentials
+.env
+*.env
+!.env.example
+
+# Go build output and binaries
+backend/bin/
+backend/dist/
+backend/tmp/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Node & Frontend (handled by frontend developer)
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/build/
+.npm
+.yarn/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# IDE and Editor configurations
+.vscode/
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Windows OS temporary files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
