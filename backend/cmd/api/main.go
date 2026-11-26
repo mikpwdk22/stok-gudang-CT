@@ -48,6 +48,7 @@ func main() {
 
 	var authHandler *handlers.AuthHandler
 	var productHandler *handlers.ProductHandler
+	var stockHandler *handlers.StockHandler
 	var authMiddleware func(http.Handler) http.Handler
 
 	db, err := database.Connect(ctx, cfg.DatabaseURL)
@@ -66,14 +67,17 @@ func main() {
 		// Repositories
 		userRepo := repository.NewUserRepository(db.Pool)
 		productRepo := repository.NewProductRepository(db.Pool)
+		txRepo := repository.NewTransactionRepository(db.Pool)
 
 		// Services
 		authService := services.NewAuthService(userRepo, cfg.JWTSecret)
 		productService := services.NewProductService(productRepo)
+		stockService := services.NewStockService(txRepo)
 
 		// Handlers
 		authHandler = handlers.NewAuthHandler(authService)
 		productHandler = handlers.NewProductHandler(productService)
+		stockHandler = handlers.NewStockHandler(stockService)
 		authMiddleware = middleware.AuthMiddleware(authService)
 	}
 
@@ -169,12 +173,49 @@ func main() {
 			http.Error(w, `{"error":"Database not available"}`, http.StatusServiceUnavailable)
 			return
 		}
-		// Distinguish exact path vs /api/products/:id
 		if strings.Trim(r.URL.Path, "/") == "api/products" {
 			authMiddleware(http.HandlerFunc(productHandler.HandleProducts)).ServeHTTP(w, r)
 			return
 		}
 		authMiddleware(http.HandlerFunc(productHandler.HandleProductByID)).ServeHTTP(w, r)
+	})
+
+	// Stock In & Stock Out Endpoints (Protected by JWT)
+	mux.HandleFunc("/api/stock/in", func(w http.ResponseWriter, r *http.Request) {
+		if stockHandler == nil || authMiddleware == nil {
+			http.Error(w, `{"error":"Database not available"}`, http.StatusServiceUnavailable)
+			return
+		}
+		authMiddleware(http.HandlerFunc(stockHandler.StockIn)).ServeHTTP(w, r)
+	})
+
+	mux.HandleFunc("/api/stock/out", func(w http.ResponseWriter, r *http.Request) {
+		if stockHandler == nil || authMiddleware == nil {
+			http.Error(w, `{"error":"Database not available"}`, http.StatusServiceUnavailable)
+			return
+		}
+		authMiddleware(http.HandlerFunc(stockHandler.StockOut)).ServeHTTP(w, r)
+	})
+
+	// Transaction History Endpoints (Protected by JWT)
+	mux.HandleFunc("/api/transactions", func(w http.ResponseWriter, r *http.Request) {
+		if stockHandler == nil || authMiddleware == nil {
+			http.Error(w, `{"error":"Database not available"}`, http.StatusServiceUnavailable)
+			return
+		}
+		authMiddleware(http.HandlerFunc(stockHandler.ListTransactions)).ServeHTTP(w, r)
+	})
+
+	mux.HandleFunc("/api/transactions/", func(w http.ResponseWriter, r *http.Request) {
+		if stockHandler == nil || authMiddleware == nil {
+			http.Error(w, `{"error":"Database not available"}`, http.StatusServiceUnavailable)
+			return
+		}
+		if strings.Trim(r.URL.Path, "/") == "api/transactions" {
+			authMiddleware(http.HandlerFunc(stockHandler.ListTransactions)).ServeHTTP(w, r)
+			return
+		}
+		authMiddleware(http.HandlerFunc(stockHandler.GetTransactionByID)).ServeHTTP(w, r)
 	})
 
 	// 4. Configure HTTP Server with CORS
