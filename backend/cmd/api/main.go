@@ -13,6 +13,10 @@ import (
 
 	"ctstock/backend/internal/config"
 	"ctstock/backend/internal/database"
+	"ctstock/backend/internal/handlers"
+	"ctstock/backend/internal/middleware"
+	"ctstock/backend/internal/repository"
+	"ctstock/backend/internal/services"
 )
 
 type HealthResponse struct {
@@ -41,6 +45,9 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	var authHandler *handlers.AuthHandler
+	var authMiddleware func(http.Handler) http.Handler
+
 	db, err := database.Connect(ctx, cfg.DatabaseURL)
 	if err != nil {
 		log.Printf("Warning: Failed to connect to database at startup: %v\n", err)
@@ -48,11 +55,17 @@ func main() {
 	} else {
 		defer db.Close()
 
-		// Initialize migrations runner
+		// Run pending migrations
 		migrator := database.NewMigrationRunner(db.Pool, "migrations")
 		if err := migrator.Up(ctx); err != nil {
 			log.Printf("Migration warning: %v\n", err)
 		}
+
+		// Initialize Repositories and Services
+		userRepo := repository.NewUserRepository(db.Pool)
+		authService := services.NewAuthService(userRepo, cfg.JWTSecret)
+		authHandler = handlers.NewAuthHandler(authService)
+		authMiddleware = middleware.AuthMiddleware(authService)
 	}
 
 	// 3. Set Up HTTP Routes
@@ -116,10 +129,27 @@ func main() {
 		})
 	})
 
-	// 4. Configure HTTP Server
+	// Auth Routes
+	mux.HandleFunc("/api/auth/login", func(w http.ResponseWriter, r *http.Request) {
+		if authHandler == nil {
+			http.Error(w, `{"error":"Database not available"}`, http.StatusServiceUnavailable)
+			return
+		}
+		authHandler.Login(w, r)
+	})
+
+	mux.HandleFunc("/api/auth/me", func(w http.ResponseWriter, r *http.Request) {
+		if authHandler == nil || authMiddleware == nil {
+			http.Error(w, `{"error":"Database not available"}`, http.StatusServiceUnavailable)
+			return
+		}
+		authMiddleware(http.HandlerFunc(authHandler.Me)).ServeHTTP(w, r)
+	})
+
+	// 4. Configure HTTP Server with CORS
 	server := &http.Server{
 		Addr:         ":" + cfg.Port,
-		Handler:      mux,
+		Handler:      middleware.CORSMiddleware(mux),
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 15 * time.Second,
 		IdleTimeout:  60 * time.Second,
@@ -155,4 +185,3 @@ func main() {
 		log.Println("Server gracefully stopped")
 	}
 }
-
