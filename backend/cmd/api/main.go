@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -46,6 +47,7 @@ func main() {
 	defer cancel()
 
 	var authHandler *handlers.AuthHandler
+	var productHandler *handlers.ProductHandler
 	var authMiddleware func(http.Handler) http.Handler
 
 	db, err := database.Connect(ctx, cfg.DatabaseURL)
@@ -61,10 +63,17 @@ func main() {
 			log.Printf("Migration warning: %v\n", err)
 		}
 
-		// Initialize Repositories and Services
+		// Repositories
 		userRepo := repository.NewUserRepository(db.Pool)
+		productRepo := repository.NewProductRepository(db.Pool)
+
+		// Services
 		authService := services.NewAuthService(userRepo, cfg.JWTSecret)
+		productService := services.NewProductService(productRepo)
+
+		// Handlers
 		authHandler = handlers.NewAuthHandler(authService)
+		productHandler = handlers.NewProductHandler(productService)
 		authMiddleware = middleware.AuthMiddleware(authService)
 	}
 
@@ -129,7 +138,7 @@ func main() {
 		})
 	})
 
-	// Auth Routes
+	// Auth Endpoints
 	mux.HandleFunc("/api/auth/login", func(w http.ResponseWriter, r *http.Request) {
 		if authHandler == nil {
 			http.Error(w, `{"error":"Database not available"}`, http.StatusServiceUnavailable)
@@ -144,6 +153,28 @@ func main() {
 			return
 		}
 		authMiddleware(http.HandlerFunc(authHandler.Me)).ServeHTTP(w, r)
+	})
+
+	// Product Endpoints (Protected by JWT)
+	mux.HandleFunc("/api/products", func(w http.ResponseWriter, r *http.Request) {
+		if productHandler == nil || authMiddleware == nil {
+			http.Error(w, `{"error":"Database not available"}`, http.StatusServiceUnavailable)
+			return
+		}
+		authMiddleware(http.HandlerFunc(productHandler.HandleProducts)).ServeHTTP(w, r)
+	})
+
+	mux.HandleFunc("/api/products/", func(w http.ResponseWriter, r *http.Request) {
+		if productHandler == nil || authMiddleware == nil {
+			http.Error(w, `{"error":"Database not available"}`, http.StatusServiceUnavailable)
+			return
+		}
+		// Distinguish exact path vs /api/products/:id
+		if strings.Trim(r.URL.Path, "/") == "api/products" {
+			authMiddleware(http.HandlerFunc(productHandler.HandleProducts)).ServeHTTP(w, r)
+			return
+		}
+		authMiddleware(http.HandlerFunc(productHandler.HandleProductByID)).ServeHTTP(w, r)
 	})
 
 	// 4. Configure HTTP Server with CORS
